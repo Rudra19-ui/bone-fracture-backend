@@ -12,7 +12,7 @@ DATA_DIR = Path("/data") if os.path.exists("/data") else BASE_DIR
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-secret-key')
 DEBUG = os.getenv('DJANGO_DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'bone-fracture-backend-or69.onrender.com,localhost').split(',')
+ALLOWED_HOSTS = os.getenv('DJANGO_ALLOWED_HOSTS', 'bone-fracture-backend-or69.onrender.com,bone-fracture-detects-api.onrender.com,localhost').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -79,6 +79,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = DATA_DIR / 'media'
 
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'https://bone-fracture-frontend.onrender.com,http://localhost:3000').split(',')
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'https://bone-fracture-frontend.onrender.com,https://bone-fracture-detects-web.onrender.com,http://localhost:3000').split(',')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
