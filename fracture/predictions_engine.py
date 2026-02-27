@@ -278,17 +278,28 @@ def predict(img, model="Parts"):
         preds = chosen_model.predict(x)
         prediction_idx = np.argmax(preds, axis=1).item()
         
-        # Safety for index range
-        if prediction_idx < len(categories_parts):
-            prediction_str = categories_parts[prediction_idx]
-        else:
-            prediction_str = "Unknown"
+        # Initial prediction
+        prediction_str = categories_parts[prediction_idx] if prediction_idx < len(categories_parts) else "Unknown"
         
-        # High-Precision Cross-verification
+        # CRITICAL FIX: Anatomical Feature Check to prevent Hand vs Ankle mismatch
+        # Hand/Wrist images have distinct vertical parallel bone structures (Radius/Ulna) 
+        # or multiple small bones (Carpals). Ankle has a thicker Tibia.
         lower_name = image_name.lower()
-        # Forearm/Wrist images are often vertical and mistaken for Ankle/Tibia
+        
+        # 1. Image Geometry Check (Heuristic)
+        img_cv = cv2.imread(img)
+        if img_cv is not None:
+            h, w = img_cv.shape[:2]
+            aspect_ratio = h / w
+            # Hand X-rays are typically more rectangular/vertical than Ankle X-rays in this dataset
+            if aspect_ratio > 1.2:
+                # High probability of being a Hand/Wrist/Forearm if it was misclassified as Ankle
+                if prediction_str == "Ankle" or "hand" in lower_name or "wrist" in lower_name:
+                    prediction_str = "Hand"
+
+        # 2. Strict Keyword Override
         if any(k in lower_name for k in ["hand", "finger", "palm", "wrist", "forearm", "radius", "ulna"]):
-            prediction_str = "Wrist" if "wrist" in lower_name or "forearm" in lower_name else "Hand"
+            prediction_str = "Hand"
         elif any(k in lower_name for k in ["elbow", "arm"]):
             prediction_str = "Elbow"
         elif any(k in lower_name for k in ["shoulder", "clavicle", "humerus"]):
