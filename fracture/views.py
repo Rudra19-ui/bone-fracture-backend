@@ -7,6 +7,15 @@ from .models import ImageAnalysis
 class AnalysisView(APIView):
     def post(self, request):
         data = request.data.copy()
+        
+        # Consistent Result Logic: Check if image hash already exists
+        temp_instance = ImageAnalysis(image=request.FILES.get('image'))
+        temp_instance.save_hash_only() # We need a method to just compute hash without full save
+        
+        existing_analysis = ImageAnalysis.objects.filter(image_hash=temp_instance.image_hash).first()
+        if existing_analysis:
+            return Response(ImageAnalysisSerializer(existing_analysis).data, status=status.HTTP_200_OK)
+
         serializer = ImageAnalysisSerializer(data=data)
         if serializer.is_valid():
             instance = serializer.save()
