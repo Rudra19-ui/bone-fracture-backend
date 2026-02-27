@@ -272,6 +272,16 @@ def predict(img, model="Parts"):
         cam_filename = f"cam_{int(prob_fracture*100)}_{image_name}"
         cam_path = os.path.join(os.path.dirname(img), cam_filename)
         save_gradcam(img, heatmap, cam_path)
+
+        # Anatomical Location Mapping based on bone part
+        location_map = {
+            "Elbow": "Humerus / Olecranon",
+            "Hand": "Metacarpals / Phalanx",
+            "Shoulder": "Clavicle / Humerus Head",
+            "Wrist": "Distal Radius / Ulna",
+            "Ankle": "Tibia / Fibula"
+        }
+        location = location_map.get(model, "Bone Structure")
         
         # Update Cache
         _save_cached(image_name=image_name, image_hash=image_hash, fracture_result=prediction_str)
@@ -283,6 +293,7 @@ def predict(img, model="Parts"):
             "confidence_category": confidence_category,
             "safety_message": safety_message,
             "cam_path": cam_path,
+            "location": location,
             "original_result": categories_fracture[np.argmax(preds)],
             "disclaimer": "Research Prototype - Not a Diagnostic Tool"
         }
