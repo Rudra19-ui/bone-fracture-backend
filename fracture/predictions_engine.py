@@ -7,19 +7,42 @@ import sqlite3
 import hashlib
 import cv2
 
-# load the models when import "predictions.py"
 # Use absolute paths for the backend
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
 
-try:
-    model_elbow_frac = tf.keras.models.load_model(os.path.join(WEIGHTS_DIR, "ResNet50_Elbow_frac.h5"))
-    model_hand_frac = tf.keras.models.load_model(os.path.join(WEIGHTS_DIR, "ResNet50_Hand_frac.h5"))
-    model_shoulder_frac = tf.keras.models.load_model(os.path.join(WEIGHTS_DIR, "ResNet50_Shoulder_frac.h5"))
-    model_parts = tf.keras.models.load_model(os.path.join(WEIGHTS_DIR, "ResNet50_BodyParts.h5"))
-except Exception as e:
-    print(f"Error loading models: {e}")
-    # Fallback or exit? For now, we print error.
+# Global dict to store models lazily
+_LOADED_MODELS = {}
+
+def get_model(model_name):
+    """
+    Lazily loads a model only when needed to save memory.
+    """
+    global _LOADED_MODELS
+    
+    # Clear session if we have too many models loaded (Render 512MB limit)
+    if len(_LOADED_MODELS) >= 1:
+        tf.keras.backend.clear_session()
+        _LOADED_MODELS.clear()
+
+    model_path_map = {
+        "Elbow": "ResNet50_Elbow_frac.h5",
+        "Hand": "ResNet50_Hand_frac.h5",
+        "Shoulder": "ResNet50_Shoulder_frac.h5",
+        "Parts": "ResNet50_BodyParts.h5"
+    }
+    
+    if model_name not in model_path_map:
+        model_name = "Parts"
+        
+    path = os.path.join(WEIGHTS_DIR, model_path_map[model_name])
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Model weight file not found: {path}")
+        
+    model = tf.keras.models.load_model(path)
+    _LOADED_MODELS[model_name] = model
+    return model
 
 # categories for each result by index
 
@@ -191,7 +214,7 @@ def predict(img, model="Parts"):
     if model == 'Parts':
         if cached and cached.get('part_result'):
             return cached['part_result']
-        chosen_model = model_parts
+        chosen_model = get_model("Parts")
         prediction = np.argmax(chosen_model.predict(x), axis=1)
         prediction_str = categories_parts[prediction.item()]
         _save_cached(image_name=image_name, image_hash=image_hash, part_result=prediction_str)
@@ -199,14 +222,7 @@ def predict(img, model="Parts"):
     else:
         # FRACTURE PREDICTION
         # We skip cache to ensure we provide confidence and heatmaps
-        if model == 'Elbow':
-            chosen_model = model_elbow_frac
-        elif model == 'Hand':
-            chosen_model = model_hand_frac
-        elif model == 'Shoulder':
-            chosen_model = model_shoulder_frac
-        else:
-            chosen_model = model_parts # Fallback
+        chosen_model = get_model(model)
 
         preds = chosen_model.predict(x)
         
@@ -248,6 +264,11 @@ def predict(img, model="Parts"):
         # We visualize the 'fractured' class activation (index 0)
         # Even for low confidence, we show what the model is looking at
         heatmap = make_gradcam_heatmap(x, chosen_model, pred_index=0)
+        
+        # Cleanup memory after prediction to stay within Render 512MB limit
+        tf.keras.backend.clear_session()
+        _LOADED_MODELS.clear()
+
         cam_filename = f"cam_{int(prob_fracture*100)}_{image_name}"
         cam_path = os.path.join(os.path.dirname(img), cam_filename)
         save_gradcam(img, heatmap, cam_path)
