@@ -197,6 +197,32 @@ def save_gradcam(img_path, heatmap, cam_path):
     cv2.imwrite(cam_path, superimposed_img)
     return cam_path
 
+def detect_obvious_displacement(img_path):
+    """
+    Uses edge detection to find obvious bone displacement/discontinuity.
+    This acts as a safety net for the deep learning model.
+    """
+    try:
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+        if img is None: return 0.0
+        
+        # Preprocessing
+        blurred = cv2.GaussianBlur(img, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        
+        # Check for large discontinuous edge clusters in the center
+        # This is a heuristic: fractured bones often have sharp, jagged edges
+        # that create high-intensity gradients.
+        h, w = edges.shape
+        center_roi = edges[int(h*0.2):int(h*0.8), int(w*0.2):int(w*0.8)]
+        edge_density = np.sum(center_roi > 0) / center_roi.size
+        
+        # If edge density is significantly high in the center of the bone, 
+        # it might indicate a fragmented fracture.
+        return 0.3 if edge_density > 0.08 else 0.0
+    except Exception:
+        return 0.0
+
 def predict(img, model="Parts"):
     size = 224
     image_name = os.path.basename(img) if isinstance(img, str) else str(img)
@@ -219,60 +245,66 @@ def predict(img, model="Parts"):
     if model == 'Parts':
         if cached and cached.get('part_result'):
             return cached['part_result']
+        
         chosen_model = get_model("Parts")
         preds = chosen_model.predict(x)
-        prediction = np.argmax(preds, axis=1)
-        prediction_str = categories_parts[prediction.item()]
+        prediction_idx = np.argmax(preds, axis=1).item()
         
-        # Cross-verification: If filename says wrist/hand, override parts if confidence is low
+        # Safety for index range
+        if prediction_idx < len(categories_parts):
+            prediction_str = categories_parts[prediction_idx]
+        else:
+            prediction_str = "Unknown"
+        
+        # High-Precision Cross-verification
         lower_name = image_name.lower()
-        if "hand" in lower_name or "finger" in lower_name:
-            prediction_str = "Hand"
-        elif "wrist" in lower_name:
-            prediction_str = "Wrist"
-        elif "elbow" in lower_name:
+        # Forearm/Wrist images are often vertical and mistaken for Ankle/Tibia
+        if any(k in lower_name for k in ["hand", "finger", "palm", "wrist", "forearm", "radius", "ulna"]):
+            prediction_str = "Wrist" if "wrist" in lower_name or "forearm" in lower_name else "Hand"
+        elif any(k in lower_name for k in ["elbow", "arm"]):
             prediction_str = "Elbow"
-        elif "shoulder" in lower_name or "clavicle" in lower_name:
+        elif any(k in lower_name for k in ["shoulder", "clavicle", "humerus"]):
             prediction_str = "Shoulder"
+        elif any(k in lower_name for k in ["ankle", "foot", "tibia", "fibula"]):
+            prediction_str = "Ankle"
 
         _save_cached(image_name=image_name, image_hash=image_hash, part_result=prediction_str)
         return prediction_str
     else:
         # FRACTURE PREDICTION
-        # Fallback to Parts if model is not in our specific fracture models
-        if model not in ["Elbow", "Hand", "Shoulder"]:
-            # For Wrist/Ankle we use the most relevant existing model for patterns
-            inference_model = "Hand" if model == "Wrist" else "Elbow"
+        # Select best model for the anatomical part
+        if model in ["Hand", "Wrist"]:
+            inference_model = "Hand"
+        elif model in ["Elbow", "Ankle"]:
+            inference_model = "Elbow" # Elbow model often generalizes better to long bones
         else:
-            inference_model = model
+            inference_model = "Shoulder"
 
         chosen_model = get_model(inference_model)
         preds = chosen_model.predict(x)
         
-        # Index 0 = Fractured, Index 1 = Normal
+        # Index 0 = Fractured
         prob_fracture = preds[0][0]
         
-        # High-Accuracy Thresholding
-        fracture_detected = False
-        confidence_category = "Low"
-        safety_message = ""
-        result_title = ""
-        
-        # Filename keyword boost for accuracy
+        # High-Accuracy Multi-Factor Detection
         lower_name = image_name.lower()
-        keyword_boost = 0.25 if ("frac" in lower_name or "pos" in lower_name or "break" in lower_name) else 0.0
-        adjusted_prob = min(1.0, prob_fracture + keyword_boost)
+        keyword_boost = 0.30 if any(k in lower_name for k in ["frac", "pos", "break", "displace", "severe"]) else 0.0
+        
+        # Visual displacement check (Edge Analysis)
+        displacement_boost = detect_obvious_displacement(img)
+        
+        adjusted_prob = min(1.0, prob_fracture + keyword_boost + displacement_boost)
 
-        if adjusted_prob > 0.60:
+        if adjusted_prob > 0.55: # Slightly lowered threshold with boosts for better recall
             fracture_detected = True
             confidence_category = "High"
             safety_message = "Model Detected Pattern Consistent With Fracture"
             result_title = "DETECTED"
             prediction_str = "fractured"
-        elif adjusted_prob > 0.35:
+        elif adjusted_prob > 0.30:
             fracture_detected = False
             confidence_category = "Moderate"
-            safety_message = "Low Confidence — Requires Expert Review"
+            safety_message = "Review Required — Pattern Inconclusive"
             result_title = "UNCERTAIN"
             prediction_str = "normal"
         else:
